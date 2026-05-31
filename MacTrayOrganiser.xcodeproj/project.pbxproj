@@ -20,6 +20,7 @@
 		001000000011 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 002000000011; };
 		001000000012 /* ImageCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 002000000012; };
 		001000000013 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 002000000013; };
+		001000000014 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 002000000016; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -38,6 +39,7 @@
 		002000000013 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		002000000014 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		002000000015 /* MacTrayOrganiser.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MacTrayOrganiser.entitlements; sourceTree = "<group>"; };
+		002000000016 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
 		002000000000 /* MacTrayOrganiser.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MacTrayOrganiser.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -69,6 +71,7 @@
 				004000000005 /* Views */,
 				004000000006 /* Utilities */,
 				002000000013 /* Assets.xcassets */,
+				002000000016 /* AppIcon.icns */,
 				002000000014 /* Info.plist */,
 				002000000015 /* MacTrayOrganiser.entitlements */,
 			);
@@ -181,6 +184,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				001000000013 /* Assets.xcassets in Resources */,
+				001000000014 /* AppIcon.icns in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

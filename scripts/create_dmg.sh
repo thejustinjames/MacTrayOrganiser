@@ -37,7 +37,19 @@ ln -s /Applications "$DMG_CONTENTS/Applications"
 
 # Copy background
 mkdir -p "$DMG_CONTENTS/.background"
-cp dmg_background.png "$DMG_CONTENTS/.background/background.png"
+if [ -f "dmg_background.png" ]; then
+    cp dmg_background.png "$DMG_CONTENTS/.background/background.png"
+else
+    # Generate background if not present
+    swift scripts/create_dmg_background.swift
+    cp dmg_background.png "$DMG_CONTENTS/.background/background.png"
+fi
+
+# Copy volume icon (use app icon)
+ICON_PATH="MacTrayOrganiser/AppIcon.icns"
+if [ -f "$ICON_PATH" ]; then
+    cp "$ICON_PATH" "$DMG_CONTENTS/.VolumeIcon.icns"
+fi
 
 # Calculate size needed (app size + 50MB buffer)
 APP_SIZE=$(du -sm "$APP_PATH" | cut -f1)
@@ -86,6 +98,12 @@ tell application "Finder"
     end tell
 end tell
 EOF
+
+# Set volume icon
+if [ -f "$MOUNT_DIR/.VolumeIcon.icns" ]; then
+    SetFile -c icnC "$MOUNT_DIR/.VolumeIcon.icns"
+    SetFile -a C "$MOUNT_DIR"
+fi
 
 # Finalize the DMG
 sync
