@@ -116,6 +116,16 @@ hdiutil convert "$DIST_DIR/$DMG_TEMP" -format UDZO -imagekey zlib-level=9 -o "$D
 rm -f "$DIST_DIR/$DMG_TEMP"
 rm -rf "$DMG_CONTENTS"
 
+# Set icon on DMG file itself
+echo "Setting DMG file icon..."
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+osascript << APPLESCRIPT
+use framework "AppKit"
+set theImage to current application's NSImage's alloc()'s initWithContentsOfFile:"$PROJECT_DIR/MacTrayOrganiser/AppIcon.icns"
+current application's NSWorkspace's sharedWorkspace()'s setIcon:theImage forFile:"$PROJECT_DIR/$DIST_DIR/$DMG_FINAL" options:0
+APPLESCRIPT
+
 echo ""
 echo "DMG created successfully: $DIST_DIR/$DMG_FINAL"
 ls -lh "$DIST_DIR/$DMG_FINAL"
