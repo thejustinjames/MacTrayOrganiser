@@ -1,0 +1,43 @@
+# Xcode
+build/
+DerivedData/
+*.xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Temporary files
+*.swp
+*.lock
+*.tmp
+*~
+
+# Build artifacts
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# CocoaPods (if used)
+Pods/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Carthage (if used)
+Carthage/Build/
+
+# Archives
+*.xcarchive
+
+# Distribution
+# dist/
+
+# Temporary icon generation files
+AppIcon.iconset/
+dmg_background.png
