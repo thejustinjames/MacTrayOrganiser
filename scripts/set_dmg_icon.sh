@@ -1,51 +1,44 @@
 #!/bin/bash
 
-# Set custom icon on DMG file
-DMG_PATH="dist/MacTrayOrganiser-1.0.0.dmg"
+# Set the app icon as the Finder icon of a DMG file.
+# Usage: scripts/set_dmg_icon.sh [path/to/file.dmg]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_DIR"
+
+DMG_PATH="${1:-dist/MacTrayOrganiser-1.1.0.dmg}"
 ICON_PATH="MacTrayOrganiser/AppIcon.icns"
 
-if [ ! -f "$DMG_PATH" ] || [ ! -f "$ICON_PATH" ]; then
-    echo "Error: DMG or icon file not found"
+if [ ! -f "$DMG_PATH" ]; then
+    echo "Error: DMG not found at $DMG_PATH"
     exit 1
 fi
 
-# Create a temporary app bundle to hold the icon
-TEMP_APP=$(mktemp -d)/IconSetter.app
-mkdir -p "$TEMP_APP/Contents/Resources"
-cp "$ICON_PATH" "$TEMP_APP/Contents/Resources/applet.icns"
+if [ ! -f "$ICON_PATH" ]; then
+    echo "Error: icon not found at $ICON_PATH"
+    exit 1
+fi
 
-cat > "$TEMP_APP/Contents/Info.plist" << 'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleIconFile</key>
-    <string>applet.icns</string>
-</dict>
-</plist>
-PLIST
+# Absolute paths for the AppKit calls below
+DMG_ABS="$(cd "$(dirname "$DMG_PATH")" && pwd)/$(basename "$DMG_PATH")"
+ICON_ABS="$PROJECT_DIR/$ICON_PATH"
 
-# Use fileicon if available, otherwise use Python
-if command -v fileicon &> /dev/null; then
-    fileicon set "$DMG_PATH" "$ICON_PATH"
+# Use fileicon if available, otherwise AppKit via osascript (no extra
+# dependencies; the previous Python route needed PyObjC, which the system
+# python3 does not ship with).
+if command -v fileicon >/dev/null 2>&1; then
+    fileicon set "$DMG_ABS" "$ICON_ABS"
 else
-    # Use Python/PyObjC method
-    python3 << PYTHON
-import Cocoa
-import os
-
-icon_path = "$ICON_PATH"
-dmg_path = "$DMG_PATH"
-
-# Load the icon
-icon = Cocoa.NSImage.alloc().initWithContentsOfFile_(icon_path)
-if icon:
-    workspace = Cocoa.NSWorkspace.sharedWorkspace()
-    workspace.setIcon_forFile_options_(icon, dmg_path, 0)
-    print(f"Icon set successfully on {dmg_path}")
-else:
-    print(f"Failed to load icon from {icon_path}")
-PYTHON
+    osascript <<APPLESCRIPT
+use framework "AppKit"
+set theImage to current application's NSImage's alloc()'s initWithContentsOfFile:"$ICON_ABS"
+if theImage is missing value then error "Could not load icon from $ICON_ABS"
+set ok to current application's NSWorkspace's sharedWorkspace()'s setIcon:theImage forFile:"$DMG_ABS" options:0
+if not ok then error "NSWorkspace refused to set the icon on $DMG_ABS"
+APPLESCRIPT
 fi
 
 echo "Done setting icon on $DMG_PATH"

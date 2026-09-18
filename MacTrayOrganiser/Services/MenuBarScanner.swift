@@ -10,35 +10,73 @@ import AppKit
 import ApplicationServices
 import Combine
 
-class MenuBarScanner: ObservableObject {
+/// Discovers menu bar items over the Accessibility API and publishes them.
+///
+/// Discovery runs on a background queue and touches only the Accessibility
+/// API. Everything that reads settings or the status bar layout happens on
+/// the main actor in `publish()`, which reruns whenever the settings change
+/// so the list stays in sync without a full rescan.
+///
+/// An item counts as hidden when it sits left of MacTrayOrganiser's separator
+/// in the real menu bar, which the user arranges by ⌘-dragging icons across
+/// the separator. macOS does not let an app move another app's menu bar
+/// items, so the app never moves them itself.
+@MainActor
+final class MenuBarScanner: ObservableObject {
     static let shared = MenuBarScanner()
 
-    @Published var menuBarItems: [MenuBarItem] = []
-    @Published var isScanning: Bool = false
-    @Published var lastScanTime: Date?
-    @Published var scanError: String?
+    @Published private(set) var menuBarItems: [MenuBarItem] = []
+    @Published private(set) var isScanning: Bool = false
+    @Published private(set) var lastScanTime: Date?
+    @Published private(set) var scanError: String?
 
-    private let accessibilityService = AccessibilityService.shared
+    private let settings = AppSettings.shared
+    private let scanQueue = DispatchQueue(label: "com.mactrayorganiser.scan", qos: .userInitiated)
     private var refreshTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
 
+    /// Items as discovered, before settings and layout are applied.
+    private var discoveredItems: [MenuBarItem] = []
+
     private init() {
-        // Listen for permission changes
         NotificationCenter.default.publisher(for: .accessibilityPermissionGranted)
-            .sink { [weak self] _ in
-                self?.startAutoRefresh()
-                self?.scan()
-            }
+            .sink { _ in Task { @MainActor in MenuBarScanner.shared.startAutoRefresh() } }
             .store(in: &cancellables)
 
         NotificationCenter.default.publisher(for: .accessibilityPermissionRevoked)
-            .sink { [weak self] _ in
-                self?.stopAutoRefresh()
-                self?.menuBarItems = []
+            .sink { _ in
+                Task { @MainActor in
+                    let scanner = MenuBarScanner.shared
+                    scanner.stopAutoRefresh()
+                    scanner.discoveredItems = []
+                    scanner.menuBarItems = []
+                }
             }
             .store(in: &cancellables)
 
-        // Start auto-refresh if we already have permission
+        // Re-apply preferences whenever any setting changes. objectWillChange
+        // fires before the mutation; hopping to the main queue delivers it after.
+        settings.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { _ in Task { @MainActor in MenuBarScanner.shared.publish() } }
+            .store(in: &cancellables)
+
+        settings.$refreshInterval
+            .dropFirst()
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { _ in
+                Task { @MainActor in
+                    guard PermissionManager.shared.hasAccessibilityPermission else { return }
+                    MenuBarScanner.shared.scheduleTimer()
+                }
+            }
+            .store(in: &cancellables)
+    }
+
+    /// Begin periodic scanning if permission is already granted. Called once
+    /// at launch; later permission grants start scanning via notification.
+    func start() {
         if PermissionManager.shared.hasAccessibilityPermission {
             startAutoRefresh()
         }
@@ -46,134 +84,116 @@ class MenuBarScanner: ObservableObject {
 
     // MARK: - Scanning
 
-    /// Perform a full scan of all menu bar items
     func scan() {
         guard PermissionManager.shared.hasAccessibilityPermission else {
             scanError = "Accessibility permission required"
             return
         }
+        guard !isScanning else { return }
 
         isScanning = true
         scanError = nil
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-
-            var items: [MenuBarItem] = []
-
-            // Get SystemUIServer items (most third-party menu bar apps)
-            items.append(contentsOf: self.scanSystemUIServer())
-
-            // Get Control Center items
-            items.append(contentsOf: self.scanControlCenter())
-
-            // Get items from other running apps with menu bar extras
-            items.append(contentsOf: self.scanRunningApps())
-
-            // Sort by position (left to right)
-            items.sort { $0.position.x < $1.position.x }
-
-            // Apply user's custom ordering
-            items = self.applyUserOrdering(items)
-
-            DispatchQueue.main.async {
-                self.menuBarItems = items
-                self.isScanning = false
-                self.lastScanTime = Date()
+        let ownBundleID = Bundle.main.bundleIdentifier
+        scanQueue.async {
+            let items = Self.discoverItems(ownBundleID: ownBundleID)
+            Task { @MainActor in
+                let scanner = MenuBarScanner.shared
+                scanner.discoveredItems = items
+                scanner.publish()
+                scanner.isScanning = false
+                scanner.lastScanTime = Date()
             }
         }
     }
 
-    /// Scan SystemUIServer for menu bar extras
-    private func scanSystemUIServer() -> [MenuBarItem] {
-        let extras = accessibilityService.getMenuBarExtras()
-        return extras.compactMap { createMenuBarItem(from: $0, ownerName: "SystemUIServer") }
-    }
+    // MARK: - Discovery (background)
 
-    /// Scan Control Center items
-    private func scanControlCenter() -> [MenuBarItem] {
-        let items = accessibilityService.getControlCenterItems()
-        return items.compactMap { createMenuBarItem(from: $0, ownerName: "Control Center") }
-    }
-
-    /// Scan all running apps for menu bar items
-    private func scanRunningApps() -> [MenuBarItem] {
+    private nonisolated static func discoverItems(ownBundleID: String?) -> [MenuBarItem] {
         var items: [MenuBarItem] = []
 
-        // List of bundle identifiers to skip (already scanned or system)
-        let skipBundles = [
-            "com.apple.systemuiserver",
-            "com.apple.controlcenter",
-            "com.apple.finder" // Finder's menu bar is the app menu, not extras
-        ]
+        items.append(contentsOf: AccessibilityService.shared.getMenuBarExtras().compactMap {
+            createMenuBarItem(from: $0, ownerName: "SystemUIServer", isSystemItem: true)
+        })
+        items.append(contentsOf: AccessibilityService.shared.getControlCenterItems().compactMap {
+            createMenuBarItem(from: $0, ownerName: "Control Center", isSystemItem: true)
+        })
+        items.append(contentsOf: scanRunningApps(ownBundleID: ownBundleID))
 
-        for app in NSWorkspace.shared.runningApplications {
-            // Skip apps without bundle identifiers or in skip list
-            guard let bundleId = app.bundleIdentifier,
-                  !skipBundles.contains(bundleId) else {
-                continue
-            }
+        items.sort { $0.position.x < $1.position.x }
 
-            // Only check apps that might have menu bar items
-            // (accessory apps are typically menu bar apps)
-            if app.activationPolicy == .accessory || app.activationPolicy == .regular {
-                let appItems = scanApp(pid: app.processIdentifier, name: app.localizedName ?? bundleId)
-                items.append(contentsOf: appItems)
-            }
+        // Two items from the same app with the same title would otherwise
+        // collide, which breaks SwiftUI's ForEach.
+        var seen: [String: Int] = [:]
+        for index in items.indices {
+            let baseID = items[index].id
+            let count = seen[baseID, default: 0]
+            seen[baseID] = count + 1
+            if count > 0 { items[index].id = "\(baseID)#\(count)" }
         }
-
         return items
     }
 
-    /// Scan a specific app for its menu bar extras
-    private func scanApp(pid: pid_t, name: String) -> [MenuBarItem] {
-        let appElement = accessibilityService.getApplicationElement(pid: pid)
+    private nonisolated static func scanRunningApps(ownBundleID: String?) -> [MenuBarItem] {
+        var items: [MenuBarItem] = []
+        var skipBundles: Set<String> = [
+            "com.apple.systemuiserver",
+            "com.apple.controlcenter",
+            "com.apple.finder"
+        ]
+        if let ownBundleID { skipBundles.insert(ownBundleID) }
 
-        // Try to get extras menu bar
-        guard let extrasMenuBar: AXUIElement = accessibilityService.getAttribute(
-            appElement,
-            attribute: kAXExtrasMenuBarAttribute as String
-        ) else {
-            return []
+        for app in NSWorkspace.shared.runningApplications {
+            guard let bundleId = app.bundleIdentifier, !skipBundles.contains(bundleId) else { continue }
+            guard app.activationPolicy == .accessory || app.activationPolicy == .regular else { continue }
+            items.append(contentsOf: scanApp(
+                pid: app.processIdentifier,
+                name: app.localizedName ?? bundleId,
+                icon: app.icon
+            ))
         }
-
-        guard let children = accessibilityService.getChildren(extrasMenuBar) else {
-            return []
-        }
-
-        return children.compactMap { createMenuBarItem(from: $0, ownerName: name, pid: pid) }
+        return items
     }
 
-    /// Create a MenuBarItem from an AXUIElement
-    private func createMenuBarItem(from element: AXUIElement, ownerName: String, pid: pid_t? = nil) -> MenuBarItem? {
-        // Get position and size
-        guard let position = accessibilityService.getPosition(element),
-              let size = accessibilityService.getSize(element) else {
+    private nonisolated static func scanApp(pid: pid_t, name: String, icon: NSImage?) -> [MenuBarItem] {
+        let service = AccessibilityService.shared
+        let appElement = service.getApplicationElement(pid: pid)
+        guard let extrasMenuBar: AXUIElement = service.getAttribute(
+            appElement, attribute: kAXExtrasMenuBarAttribute as String
+        ), let children = service.getChildren(extrasMenuBar) else {
+            return []
+        }
+        return children.compactMap {
+            createMenuBarItem(from: $0, ownerName: name, pid: pid, icon: icon)
+        }
+    }
+
+    private nonisolated static func createMenuBarItem(
+        from element: AXUIElement,
+        ownerName: String,
+        pid: pid_t? = nil,
+        isSystemItem: Bool = false,
+        icon: NSImage? = nil
+    ) -> MenuBarItem? {
+        let service = AccessibilityService.shared
+        guard let position = service.getPosition(element),
+              let size = service.getSize(element) else {
             return nil
         }
 
-        // Skip items at position 0,0 or with zero size (likely hidden or invalid)
-        guard position.x > 0, size.width > 0, size.height > 0 else {
+        // Real status items sit in the menu bar band at the top of the
+        // primary display. Zero-sized entries and items parked elsewhere are
+        // placeholders macOS keeps for status items that are not shown.
+        // Items pushed off the left edge by the collapsed separator keep a
+        // negative x and are kept.
+        guard size.width > 0, size.height > 0, position.y >= 0, position.y < 60 else {
             return nil
         }
 
-        // Get title/description
-        let title = accessibilityService.getTitle(element)
-            ?? accessibilityService.getDescription(element)
+        let title = service.getTitle(element)
+            ?? service.getDescription(element)
             ?? "unknown"
-
-        // Get PID
-        let itemPid: pid_t
-        if let providedPid = pid {
-            itemPid = providedPid
-        } else if let elementPid = accessibilityService.getPID(element) {
-            itemPid = elementPid
-        } else {
-            itemPid = 0
-        }
-
-        let settings = AppSettings.shared
-        let itemKey = "\(ownerName)_\(title)"
+        let itemPid = pid ?? service.getPID(element) ?? 0
 
         return MenuBarItem(
             title: title,
@@ -182,45 +202,40 @@ class MenuBarScanner: ObservableObject {
             position: position,
             size: size,
             axElement: element,
-            icon: nil, // Will be captured separately if needed
-            isHidden: settings.isHidden(itemKey),
-            isPinned: settings.isPinned(itemKey),
-            sortOrder: settings.getOrder(itemKey)
+            isSystemItem: isSystemItem,
+            icon: icon
         )
     }
 
-    /// Apply user's custom ordering to items
-    private func applyUserOrdering(_ items: [MenuBarItem]) -> [MenuBarItem] {
-        return items.sorted { item1, item2 in
-            // Pinned items first
-            if item1.isPinned && !item2.isPinned {
-                return true
-            }
-            if !item1.isPinned && item2.isPinned {
-                return false
-            }
+    // MARK: - Publishing (main actor)
 
-            // Then by custom sort order
-            if item1.sortOrder != item2.sortOrder {
-                return item1.sortOrder < item2.sortOrder
-            }
+    /// Filter and flag the discovered items using the current settings and
+    /// the separator's position, then publish them in menu bar order with
+    /// pinned items first.
+    private func publish() {
+        var items = discoveredItems
 
-            // Finally by position
-            return item1.position.x < item2.position.x
+        if !settings.showSystemIcons {
+            items.removeAll { $0.isSystemItem }
+        }
+
+        let boundary = StatusBarController.shared.hiddenBoundaryX
+        for index in items.indices {
+            let item = items[index]
+            items[index].isHidden = boundary.map { item.position.x < $0 } ?? false
+            items[index].isPinned = settings.isPinned(item.preferenceKey)
+        }
+
+        menuBarItems = items.sorted { lhs, rhs in
+            if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
+            return lhs.position.x < rhs.position.x
         }
     }
 
     // MARK: - Auto Refresh
 
-    func startAutoRefresh(interval: TimeInterval? = nil) {
-        let refreshInterval = interval ?? AppSettings.shared.refreshInterval
-        stopAutoRefresh()
-
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: refreshInterval, repeats: true) { [weak self] _ in
-            self?.scan()
-        }
-
-        // Perform initial scan
+    func startAutoRefresh() {
+        scheduleTimer()
         scan()
     }
 
@@ -229,27 +244,36 @@ class MenuBarScanner: ObservableObject {
         refreshTimer = nil
     }
 
+    private func scheduleTimer() {
+        stopAutoRefresh()
+        let interval = settings.refreshInterval
+        guard !settings.isManualRefresh else { return }
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
+            Task { @MainActor in MenuBarScanner.shared.scan() }
+        }
+        timer.tolerance = interval * 0.2
+        refreshTimer = timer
+    }
+
     // MARK: - Item Actions
 
-    /// Click a menu bar item
+    /// Click a menu bar item. A hidden item is revealed first, since a menu
+    /// cannot open from an item that is off the edge of the screen.
     func clickItem(_ item: MenuBarItem) {
-        DispatchQueue.global(qos: .userInteractive).async {
-            item.performClick()
+        let bar = StatusBarController.shared
+        if item.isHidden && bar.isCollapsed {
+            bar.setCollapsed(false)
+            DispatchQueue.global(qos: .userInteractive).asyncAfter(deadline: .now() + 0.35) {
+                item.performClick()
+            }
+        } else {
+            DispatchQueue.global(qos: .userInteractive).async {
+                item.performClick()
+            }
         }
     }
 
-    /// Get visible (non-hidden) items
-    var visibleItems: [MenuBarItem] {
-        menuBarItems.filter { !$0.isHidden }
-    }
-
-    /// Get hidden items
-    var hiddenItems: [MenuBarItem] {
-        menuBarItems.filter { $0.isHidden }
-    }
-
-    /// Get pinned items
-    var pinnedItems: [MenuBarItem] {
-        menuBarItems.filter { $0.isPinned }
-    }
+    var visibleItems: [MenuBarItem] { menuBarItems.filter { !$0.isHidden } }
+    var hiddenItems: [MenuBarItem] { menuBarItems.filter { $0.isHidden } }
+    var pinnedItems: [MenuBarItem] { menuBarItems.filter { $0.isPinned } }
 }

@@ -1,20 +1,39 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
 APP_NAME="MacTrayOrganiser"
 DMG_NAME="MacTrayOrganiser"
-VERSION="1.0.0"
+VERSION="1.1.0"
 VOLUME_NAME="${APP_NAME}"
 DMG_TEMP="${DMG_NAME}-temp.dmg"
 DMG_FINAL="${DMG_NAME}-${VERSION}.dmg"
 DIST_DIR="dist"
+MOUNT_DIR="/Volumes/$VOLUME_NAME"
 
-# Get the built app path
-APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData/MacTrayOrganiser-*/Build/Products/Release -name "MacTrayOrganiser.app" -type d 2>/dev/null | head -1)
+# All paths below are relative to the project root, wherever this is run from
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_DIR"
+
+DMG_CONTENTS=""
+
+cleanup() {
+    if [ -d "$MOUNT_DIR" ]; then
+        hdiutil detach "$MOUNT_DIR" -quiet 2>/dev/null || hdiutil detach "$MOUNT_DIR" -force -quiet 2>/dev/null || true
+    fi
+    if [ -n "$DMG_CONTENTS" ] && [ -d "$DMG_CONTENTS" ]; then
+        rm -rf "$DMG_CONTENTS"
+    fi
+    rm -f "$DIST_DIR/$DMG_TEMP"
+}
+trap cleanup EXIT
+
+# Get the most recently built Release app
+APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData/MacTrayOrganiser-*/Build/Products/Release -maxdepth 1 -name "MacTrayOrganiser.app" -type d 2>/dev/null | xargs -I{} stat -f '%m %N' {} | sort -rn | head -1 | cut -d' ' -f2-)
 
 if [ -z "$APP_PATH" ]; then
-    echo "Error: Could not find built app. Please build the project first."
+    echo "Error: Could not find built app. Please build the project first (Release configuration)."
     exit 1
 fi
 
@@ -35,15 +54,12 @@ cp -R "$APP_PATH" "$DMG_CONTENTS/"
 # Create Applications symlink
 ln -s /Applications "$DMG_CONTENTS/Applications"
 
-# Copy background
+# Copy background, generating it if not present
 mkdir -p "$DMG_CONTENTS/.background"
-if [ -f "dmg_background.png" ]; then
-    cp dmg_background.png "$DMG_CONTENTS/.background/background.png"
-else
-    # Generate background if not present
+if [ ! -f "dmg_background.png" ]; then
     swift scripts/create_dmg_background.swift
-    cp dmg_background.png "$DMG_CONTENTS/.background/background.png"
 fi
+cp dmg_background.png "$DMG_CONTENTS/.background/background.png"
 
 # Copy volume icon (use app icon)
 ICON_PATH="MacTrayOrganiser/AppIcon.icns"
@@ -62,7 +78,6 @@ hdiutil create -srcfolder "$DMG_CONTENTS" -volname "$VOLUME_NAME" -fs HFS+ -fsar
 
 # Mount the DMG
 echo "Mounting DMG..."
-MOUNT_DIR="/Volumes/$VOLUME_NAME"
 
 # Unmount if already mounted
 if [ -d "$MOUNT_DIR" ]; then
@@ -71,12 +86,12 @@ fi
 
 hdiutil attach "$DIST_DIR/$DMG_TEMP" -readwrite -noverify -noautoopen
 
-# Wait for mount
+# Give Finder a moment to notice the volume
 sleep 2
 
 # Set window properties using AppleScript
 echo "Setting DMG window properties..."
-osascript <<EOF
+osascript <<EOS
 tell application "Finder"
     tell disk "$VOLUME_NAME"
         open
@@ -97,34 +112,29 @@ tell application "Finder"
         close
     end tell
 end tell
-EOF
+EOS
 
-# Set volume icon
+# Set volume icon. SetFile ships with the Xcode command line tools and is not
+# guaranteed to exist, so skip the custom icon rather than abort.
 if [ -f "$MOUNT_DIR/.VolumeIcon.icns" ]; then
-    SetFile -c icnC "$MOUNT_DIR/.VolumeIcon.icns"
-    SetFile -a C "$MOUNT_DIR"
+    if command -v SetFile >/dev/null 2>&1; then
+        SetFile -c icnC "$MOUNT_DIR/.VolumeIcon.icns"
+        SetFile -a C "$MOUNT_DIR"
+    else
+        echo "Warning: SetFile not found; the DMG volume will not have a custom icon."
+    fi
 fi
 
 # Finalize the DMG
 sync
-hdiutil detach "$MOUNT_DIR"
+hdiutil detach "$MOUNT_DIR" || { sleep 2; hdiutil detach "$MOUNT_DIR" -force; }
 
 echo "Converting to compressed DMG..."
 hdiutil convert "$DIST_DIR/$DMG_TEMP" -format UDZO -imagekey zlib-level=9 -o "$DIST_DIR/$DMG_FINAL"
 
-# Cleanup
-rm -f "$DIST_DIR/$DMG_TEMP"
-rm -rf "$DMG_CONTENTS"
-
 # Set icon on DMG file itself
 echo "Setting DMG file icon..."
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-osascript << APPLESCRIPT
-use framework "AppKit"
-set theImage to current application's NSImage's alloc()'s initWithContentsOfFile:"$PROJECT_DIR/MacTrayOrganiser/AppIcon.icns"
-current application's NSWorkspace's sharedWorkspace()'s setIcon:theImage forFile:"$PROJECT_DIR/$DIST_DIR/$DMG_FINAL" options:0
-APPLESCRIPT
+"$SCRIPT_DIR/set_dmg_icon.sh" "$DIST_DIR/$DMG_FINAL"
 
 echo ""
 echo "DMG created successfully: $DIST_DIR/$DMG_FINAL"

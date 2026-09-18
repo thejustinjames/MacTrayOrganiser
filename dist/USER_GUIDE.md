@@ -14,7 +14,7 @@
 ## Installation
 
 ### Download & Install
-1. Download `MacTrayOrganiser-1.0.0.dmg` from the [Releases page](https://github.com/thejustinjames/MacTrayOrganiser/releases)
+1. Download `MacTrayOrganiser-1.1.0.dmg` from the [Releases page](https://github.com/thejustinjames/MacTrayOrganiser/releases)
 2. Open the DMG file
 3. Drag **MacTrayOrganiser** to your **Applications** folder
 4. Eject the DMG
@@ -71,35 +71,45 @@ Click any icon in the MacTrayOrganiser panel to activate it - this simulates cli
 ### Tabs
 - **All** - Shows all visible menu bar items
 - **Pinned** - Shows items you've pinned as favorites
-- **Hidden** - Shows items you've chosen to hide
+- **Hidden** - Shows items in the hidden section (left of the separator)
 
 ### Context Menu (Right-Click)
 Right-click any icon to access options:
-- **Pin to Top** - Keep this icon at the top of the list
-- **Hide** - Remove this icon from the main view (access it in the Hidden tab)
+- **Activate** - Open that icon's menu
+- **Pin to Top of List** - Keep this icon at the top of the list in the app
+
+### Collapsing the hidden section
+Click the **eye button** in the top-right corner to tuck the hidden section
+away or reveal it. You can also **⌥-click** (or right-click) the
+MacTrayOrganiser icon in the menu bar to toggle it without opening the panel.
 
 ### Refreshing
 Click the **refresh button (↻)** in the top-right corner to rescan menu bar items. The app also auto-refreshes periodically.
 
 ---
 
-## Reordering Menu Bar Icons
+## Hiding and Rearranging Menu Bar Icons
 
-### Moving Icons in the Actual Menu Bar
-MacTrayOrganiser shows your menu bar items, but to **permanently reorder** them in the actual macOS menu bar:
+The hidden section is the part of the menu bar to the **left of the
+MacTrayOrganiser separator**. When you collapse it, everything there is tucked
+off the edge of the screen.
+
+### Choosing what to hide
+macOS does not let an app move another app's menu bar icons, so you place them
+yourself with a ⌘-drag:
 
 1. **Hold the Command (⌘) key**
-2. **Click and drag** the menu bar icon you want to move
-3. **Drop it** in the desired position
-4. Release the Command key
+2. **Click and drag** an icon to the **left of the separator** to hide it, or
+   to the **right** of it to keep it visible
+3. **Drop it** and release Command
+4. Click the **eye button** (or ⌥-click the MacTrayOrganiser icon) to collapse
+   the section
 
-> **Note:** This is a built-in macOS feature. Some system icons (Control Center items) may have restrictions on where they can be moved.
+> **Note:** Some system icons (certain Control Center items) cannot be moved.
 
-### Organizing Within MacTrayOrganiser
-Within the app, you can:
-- **Drag and drop** icons to reorder them in the grid
-- **Pin** frequently used icons to keep them at the top
-- **Hide** icons you rarely use
+### Within MacTrayOrganiser
+- **Pin** frequently used icons to keep them at the top of the list
+- **Click** any icon to activate it, even while it is hidden
 
 ---
 

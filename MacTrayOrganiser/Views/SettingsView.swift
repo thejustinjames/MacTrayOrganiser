@@ -9,7 +9,6 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var appSettings: AppSettings
-    @State private var showResetAlert = false
 
     var body: some View {
         TabView {
@@ -28,13 +27,14 @@ struct SettingsView: View {
                     Label("About", systemImage: "info.circle")
                 }
         }
-        .frame(width: 450, height: 300)
+        .frame(width: 450, height: 380)
     }
 }
 
 struct GeneralSettingsView: View {
     @EnvironmentObject var appSettings: AppSettings
-    @StateObject private var permissionManager = PermissionManager.shared
+    @ObservedObject private var permissionManager = PermissionManager.shared
+    @State private var showResetAlert = false
 
     var body: some View {
         Form {
@@ -44,13 +44,14 @@ struct GeneralSettingsView: View {
                 HStack {
                     Text("Refresh Interval")
                     Spacer()
-                    Picker("", selection: $appSettings.refreshInterval) {
+                    Picker("Refresh Interval", selection: $appSettings.refreshInterval) {
                         Text("1 second").tag(1.0)
                         Text("5 seconds").tag(5.0)
                         Text("10 seconds").tag(10.0)
                         Text("30 seconds").tag(30.0)
-                        Text("Manual only").tag(Double.infinity)
+                        Text("Manual only").tag(AppSettings.manualRefreshInterval)
                     }
+                    .labelsHidden()
                     .frame(width: 140)
                 }
             } header: {
@@ -88,12 +89,20 @@ struct GeneralSettingsView: View {
 
             Section {
                 Button("Reset All Settings", role: .destructive) {
-                    appSettings.resetToDefaults()
+                    showResetAlert = true
                 }
             }
         }
         .formStyle(.grouped)
         .padding()
+        .alert("Reset all settings?", isPresented: $showResetAlert) {
+            Button("Reset", role: .destructive) {
+                appSettings.resetToDefaults()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This clears your pinned items and other preferences. It cannot be undone.")
+        }
     }
 }
 
@@ -122,6 +131,19 @@ struct AppearanceSettingsView: View {
 }
 
 struct AboutView: View {
+    private static let repositoryURL = URL(string: "https://github.com/thejustinjames/MacTrayOrganiser")!
+    private static let issuesURL = URL(string: "https://github.com/thejustinjames/MacTrayOrganiser/issues")!
+
+    private var versionText: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "1.1.0"
+        let build = info?["CFBundleVersion"] as? String
+        if let build, build != version {
+            return "Version \(version) (\(build))"
+        }
+        return "Version \(version)"
+    }
+
     var body: some View {
         VStack(spacing: 16) {
             Image(systemName: "square.grid.2x2")
@@ -136,7 +158,7 @@ struct AboutView: View {
                 .font(.title)
                 .fontWeight(.semibold)
 
-            Text("Version 1.0.0")
+            Text(versionText)
                 .font(.caption)
                 .foregroundColor(.secondary)
 
@@ -150,16 +172,12 @@ struct AboutView: View {
 
             HStack(spacing: 20) {
                 Button("GitHub") {
-                    if let url = URL(string: "https://github.com/") {
-                        NSWorkspace.shared.open(url)
-                    }
+                    NSWorkspace.shared.open(Self.repositoryURL)
                 }
                 .buttonStyle(.link)
 
                 Button("Report Issue") {
-                    if let url = URL(string: "https://github.com/") {
-                        NSWorkspace.shared.open(url)
-                    }
+                    NSWorkspace.shared.open(Self.issuesURL)
                 }
                 .buttonStyle(.link)
             }
@@ -169,6 +187,19 @@ struct AboutView: View {
                 .foregroundColor(.gray)
         }
         .padding()
+    }
+}
+
+/// Opens the app's Settings window from the popover.
+struct SettingsButton<Label: View>: View {
+    @ViewBuilder let label: () -> Label
+
+    var body: some View {
+        Button(action: {
+            StatusBarController.shared.openSettings()
+        }) {
+            label()
+        }
     }
 }
 

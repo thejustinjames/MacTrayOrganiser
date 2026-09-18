@@ -8,18 +8,19 @@
 import Foundation
 import AppKit
 import ApplicationServices
+import ScreenCaptureKit
 
 class PermissionManager: ObservableObject {
     static let shared = PermissionManager()
 
-    @Published var hasAccessibilityPermission: Bool = false
-    @Published var showOnboarding: Bool = false
+    @Published private(set) var hasAccessibilityPermission: Bool = false
 
     private var permissionCheckTimer: Timer?
+    private let hasPromptedKey = "hasPromptedForAccessibility"
 
     private init() {
-        hasAccessibilityPermission = checkAccessibilityPermission()
-        startPermissionMonitoring()
+        hasAccessibilityPermission = AXIsProcessTrusted()
+        startPermissionMonitoring(interval: hasAccessibilityPermission ? 30.0 : 5.0)
     }
 
     deinit {
@@ -28,21 +29,38 @@ class PermissionManager: ObservableObject {
 
     // MARK: - Accessibility Permission
 
-    /// Check if the app has Accessibility permission
+    /// Check if the app has Accessibility permission and publish the result.
+    /// The published value is updated synchronously when called on the main
+    /// thread so callers can rely on it straight after the call.
+    @discardableResult
     func checkAccessibilityPermission() -> Bool {
         let trusted = AXIsProcessTrusted()
-        DispatchQueue.main.async {
-            self.hasAccessibilityPermission = trusted
+        if Thread.isMainThread {
+            updatePermissionState(trusted)
+        } else {
+            DispatchQueue.main.async { self.updatePermissionState(trusted) }
         }
         return trusted
     }
 
-    /// Prompt the user to grant Accessibility permission
+    /// Prompt the user to grant Accessibility permission.
+    ///
+    /// macOS only shows its own prompt once per app, so after the first
+    /// request this opens the Accessibility pane directly instead of
+    /// appearing to do nothing.
     func requestAccessibilityPermission() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        AXIsProcessTrustedWithOptions(options)
+        guard !checkAccessibilityPermission() else { return }
 
-        // Start checking more frequently after requesting
+        let defaults = UserDefaults.standard
+        if defaults.bool(forKey: hasPromptedKey) {
+            openAccessibilitySettings()
+        } else {
+            defaults.set(true, forKey: hasPromptedKey)
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            AXIsProcessTrustedWithOptions(options)
+        }
+
+        // Check more frequently while the user is in System Settings
         startPermissionMonitoring(interval: 1.0)
     }
 
@@ -62,46 +80,37 @@ class PermissionManager: ObservableObject {
 
     // MARK: - Permission Monitoring
 
-    private func startPermissionMonitoring(interval: TimeInterval = 5.0) {
+    private func startPermissionMonitoring(interval: TimeInterval) {
         permissionCheckTimer?.invalidate()
-        permissionCheckTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            self?.checkAndUpdatePermission()
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            self?.checkAccessibilityPermission()
         }
+        timer.tolerance = interval * 0.2
+        permissionCheckTimer = timer
     }
 
-    private func checkAndUpdatePermission() {
-        let wasGranted = hasAccessibilityPermission
-        let isGranted = checkAccessibilityPermission()
+    /// Runs on the main thread. Publishes the new state and notifies
+    /// listeners only when it actually changed.
+    private func updatePermissionState(_ trusted: Bool) {
+        guard trusted != hasAccessibilityPermission else { return }
+        hasAccessibilityPermission = trusted
 
-        if !wasGranted && isGranted {
-            // Permission was just granted
-            DispatchQueue.main.async {
-                self.showOnboarding = false
-            }
+        if trusted {
             // Slow down monitoring now that we have permission
             startPermissionMonitoring(interval: 30.0)
-
-            // Notify the app that permissions changed
-            NotificationCenter.default.post(
-                name: .accessibilityPermissionGranted,
-                object: nil
-            )
-        } else if wasGranted && !isGranted {
-            // Permission was revoked
-            NotificationCenter.default.post(
-                name: .accessibilityPermissionRevoked,
-                object: nil
-            )
+            NotificationCenter.default.post(name: .accessibilityPermissionGranted, object: nil)
+        } else {
+            startPermissionMonitoring(interval: 5.0)
+            NotificationCenter.default.post(name: .accessibilityPermissionRevoked, object: nil)
         }
     }
 
     // MARK: - Screen Recording Permission (Optional)
 
-    /// Check if screen recording permission is available
-    /// This is needed for capturing actual icon images
-    @available(macOS 12.3, *)
+    /// Check if screen recording permission is available.
+    /// This is needed for capturing actual icon images. Note that asking
+    /// triggers the system's Screen Recording prompt the first time.
     func checkScreenRecordingPermission() async -> Bool {
-        // Use ScreenCaptureKit to check permission
         do {
             _ = try await SCShareableContent.current
             return true
@@ -110,8 +119,6 @@ class PermissionManager: ObservableObject {
         }
     }
 }
-
-import ScreenCaptureKit
 
 // MARK: - Notification Names
 

@@ -3,11 +3,34 @@
 import AppKit
 import Foundation
 
-// Create app icon with a gradient background and grid symbol
-func createAppIcon(size: Int) -> NSImage {
-    let image = NSImage(size: NSSize(width: size, height: size))
+// Create app icon with a gradient background and grid symbol.
+//
+// Renders into a bitmap of exactly `size` pixels. Drawing into an NSImage
+// with lockFocus() would pick up the current display's backing scale and
+// produce files twice the requested size on a Retina Mac.
+func createAppIcon(size: Int) -> Data? {
+    guard let rep = NSBitmapImageRep(
+        bitmapDataPlanes: nil,
+        pixelsWide: size,
+        pixelsHigh: size,
+        bitsPerSample: 8,
+        samplesPerPixel: 4,
+        hasAlpha: true,
+        isPlanar: false,
+        colorSpaceName: .deviceRGB,
+        bytesPerRow: 0,
+        bitsPerPixel: 0
+    ) else {
+        return nil
+    }
+    rep.size = NSSize(width: size, height: size)
 
-    image.lockFocus()
+    guard let context = NSGraphicsContext(bitmapImageRep: rep) else {
+        return nil
+    }
+
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = context
 
     // Draw rounded rectangle background with gradient
     let rect = NSRect(x: 0, y: 0, width: size, height: size)
@@ -21,54 +44,50 @@ func createAppIcon(size: Int) -> NSImage {
     ])!
     gradient.draw(in: path, angle: -45)
 
-    // Draw grid icon in white
+    // Draw grid icon in white. The gap scales with the icon so every size
+    // has the same proportions.
     let iconSize = CGFloat(size) * 0.5
     let iconX = (CGFloat(size) - iconSize) / 2
     let iconY = (CGFloat(size) - iconSize) / 2
-    let cellSize = iconSize / 2 - 2
-    let gap: CGFloat = 4
+    let gap = max(1, CGFloat(size) / 64)
+    let cellSize = (iconSize - gap) / 2
 
     NSColor.white.setFill()
 
-    // Top-left cell
-    let cell1 = NSBezierPath(roundedRect: NSRect(x: iconX, y: iconY + cellSize + gap, width: cellSize, height: cellSize), xRadius: cellSize * 0.2, yRadius: cellSize * 0.2)
-    cell1.fill()
+    let cells = [
+        NSRect(x: iconX, y: iconY + cellSize + gap, width: cellSize, height: cellSize),                  // top-left
+        NSRect(x: iconX + cellSize + gap, y: iconY + cellSize + gap, width: cellSize, height: cellSize), // top-right
+        NSRect(x: iconX, y: iconY, width: cellSize, height: cellSize),                                   // bottom-left
+        NSRect(x: iconX + cellSize + gap, y: iconY, width: cellSize, height: cellSize)                   // bottom-right
+    ]
+    for cell in cells {
+        NSBezierPath(roundedRect: cell, xRadius: cellSize * 0.2, yRadius: cellSize * 0.2).fill()
+    }
 
-    // Top-right cell
-    let cell2 = NSBezierPath(roundedRect: NSRect(x: iconX + cellSize + gap, y: iconY + cellSize + gap, width: cellSize, height: cellSize), xRadius: cellSize * 0.2, yRadius: cellSize * 0.2)
-    cell2.fill()
+    context.flushGraphics()
+    NSGraphicsContext.restoreGraphicsState()
 
-    // Bottom-left cell
-    let cell3 = NSBezierPath(roundedRect: NSRect(x: iconX, y: iconY, width: cellSize, height: cellSize), xRadius: cellSize * 0.2, yRadius: cellSize * 0.2)
-    cell3.fill()
-
-    // Bottom-right cell
-    let cell4 = NSBezierPath(roundedRect: NSRect(x: iconX + cellSize + gap, y: iconY, width: cellSize, height: cellSize), xRadius: cellSize * 0.2, yRadius: cellSize * 0.2)
-    cell4.fill()
-
-    image.unlockFocus()
-
-    return image
+    return rep.representation(using: .png, properties: [:])
 }
 
-// Save image as PNG
-func saveImage(_ image: NSImage, to path: String) {
-    guard let tiffData = image.tiffRepresentation,
-          let bitmap = NSBitmapImageRep(data: tiffData),
-          let pngData = bitmap.representation(using: .png, properties: [:]) else {
-        print("Failed to create PNG data")
-        return
+// Save PNG data
+func savePNG(_ data: Data?, to path: String) -> Bool {
+    guard let data else {
+        print("Failed to create PNG data for \(path)")
+        return false
     }
 
     do {
-        try pngData.write(to: URL(fileURLWithPath: path))
+        try data.write(to: URL(fileURLWithPath: path))
         print("Saved: \(path)")
+        return true
     } catch {
         print("Failed to save \(path): \(error)")
+        return false
     }
 }
 
-// Icon sizes required for macOS app icons
+// Icon sizes required for macOS app icons (pixel size, file name)
 let sizes: [(Int, String)] = [
     (16, "icon_16x16.png"),
     (32, "icon_16x16@2x.png"),
@@ -86,15 +105,26 @@ let sizes: [(Int, String)] = [
 let iconsetPath = "AppIcon.iconset"
 let fm = FileManager.default
 
-if fm.fileExists(atPath: iconsetPath) {
-    try? fm.removeItem(atPath: iconsetPath)
+do {
+    if fm.fileExists(atPath: iconsetPath) {
+        try fm.removeItem(atPath: iconsetPath)
+    }
+    try fm.createDirectory(atPath: iconsetPath, withIntermediateDirectories: true)
+} catch {
+    print("Failed to prepare \(iconsetPath): \(error)")
+    exit(1)
 }
-try! fm.createDirectory(atPath: iconsetPath, withIntermediateDirectories: true)
 
 // Generate all icon sizes
+var failed = false
 for (size, filename) in sizes {
-    let icon = createAppIcon(size: size)
-    saveImage(icon, to: "\(iconsetPath)/\(filename)")
+    if !savePNG(createAppIcon(size: size), to: "\(iconsetPath)/\(filename)") {
+        failed = true
+    }
+}
+
+if failed {
+    exit(1)
 }
 
 print("Icon set created at \(iconsetPath)")

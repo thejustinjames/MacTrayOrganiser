@@ -2,34 +2,24 @@
 //  IconGridView.swift
 //  MacTrayOrganiser
 //
-//  Grid display of menu bar icons with drag-and-drop support
+//  Grid display of menu bar icons
 //
 
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct IconGridView: View {
     let items: [MenuBarItem]
     @EnvironmentObject var appSettings: AppSettings
-    @State private var draggedItem: MenuBarItem?
 
-    private let columns: [GridItem] = Array(repeating: GridItem(.flexible(), spacing: 8), count: 6)
+    private var columns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 8), count: max(1, appSettings.gridColumns))
+    }
 
     var body: some View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 8) {
                 ForEach(items) { item in
                     MenuBarItemView(item: item)
-                        .onDrag {
-                            draggedItem = item
-                            return NSItemProvider(object: item.id.uuidString as NSString)
-                        }
-                        .onDrop(of: [.text], delegate: IconDropDelegate(
-                            item: item,
-                            items: items,
-                            draggedItem: $draggedItem,
-                            appSettings: appSettings
-                        ))
                 }
             }
             .padding(12)
@@ -54,7 +44,7 @@ struct MenuBarItemView: View {
                     )
 
                 VStack(spacing: 2) {
-                    // Icon placeholder or actual icon
+                    // Owning app's icon when we have one, otherwise a symbol guessed from the name
                     if let icon = item.icon {
                         Image(nsImage: icon)
                             .resizable()
@@ -76,31 +66,29 @@ struct MenuBarItemView: View {
                 }
                 .padding(6)
             }
-            .frame(width: 50, height: appSettings.showIconLabels ? 50 : 40)
+            .frame(maxWidth: .infinity)
+            .frame(height: appSettings.showIconLabels ? 50 : 40)
         }
+        .contentShape(Rectangle())
         .scaleEffect(isPressed ? 0.95 : 1.0)
         .animation(.easeInOut(duration: 0.1), value: isPressed)
         .onHover { hovering in
             isHovered = hovering
         }
         .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.1)) {
-                isPressed = true
-            }
+            isPressed = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 isPressed = false
                 MenuBarScanner.shared.clickItem(item)
             }
         }
         .contextMenu {
-            Button(item.isPinned ? "Unpin" : "Pin to Top") {
-                appSettings.togglePinned(item.preferenceKey)
-                MenuBarScanner.shared.scan()
+            Button("Activate") {
+                MenuBarScanner.shared.clickItem(item)
             }
 
-            Button(item.isHidden ? "Show" : "Hide") {
-                appSettings.toggleHidden(item.preferenceKey)
-                MenuBarScanner.shared.scan()
+            Button(item.isPinned ? "Unpin" : "Pin to Top of List") {
+                appSettings.togglePinned(item.preferenceKey)
             }
 
             Divider()
@@ -115,7 +103,7 @@ struct MenuBarItemView: View {
     private func iconForItem(_ item: MenuBarItem) -> String {
         let name = item.displayName.lowercased()
 
-        if name.contains("wifi") || name.contains("wi-fi") {
+        if name.contains("wifi") || name.contains("wi-fi") || name.contains("wi‑fi") {
             return "wifi"
         } else if name.contains("bluetooth") {
             return "dot.radiowaves.left.and.right"
@@ -148,35 +136,6 @@ struct MenuBarItemView: View {
         }
 
         return "app.badge"
-    }
-}
-
-struct IconDropDelegate: DropDelegate {
-    let item: MenuBarItem
-    let items: [MenuBarItem]
-    @Binding var draggedItem: MenuBarItem?
-    let appSettings: AppSettings
-
-    func performDrop(info: DropInfo) -> Bool {
-        draggedItem = nil
-        return true
-    }
-
-    func dropEntered(info: DropInfo) {
-        guard let draggedItem = draggedItem,
-              draggedItem.id != item.id,
-              let fromIndex = items.firstIndex(where: { $0.id == draggedItem.id }),
-              let toIndex = items.firstIndex(where: { $0.id == item.id }) else {
-            return
-        }
-
-        // Update sort order in settings
-        appSettings.setOrder(draggedItem.preferenceKey, order: toIndex)
-        appSettings.setOrder(item.preferenceKey, order: fromIndex)
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: .move)
     }
 }
 

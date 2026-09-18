@@ -22,12 +22,16 @@
 
 - **📱 See All Icons** — View every menu bar item, including those hidden behind the notch or in overflow
 - **👆 Click Through** — Click any icon in the panel to activate its menu
-- **🔀 Drag & Drop** — Reorder icons to your preference within the panel
-- **📌 Pin Favorites** — Keep your most-used icons at the top
-- **👁️ Hide Clutter** — Hide icons you rarely use (still accessible in Hidden tab)
+- **👁️ Collapse Clutter** — Tuck icons away behind a separator and reveal them with one click, like Hidden Bar
+- **⬅️ Sits Far Left** — The app places its own icon at the left end of the menu bar
+- **📌 Pin Favorites** — Keep your most-used icons at the top of the list
 - **🔄 Auto Refresh** — Automatically detects new menu bar items
 - **⚙️ Customizable** — Adjust grid size, labels, refresh interval, and more
-- **🚀 Native Performance** — Built with Swift and SwiftUI for optimal performance
+- **🚀 Native Performance** — Built with Swift and SwiftUI
+
+> **On rearranging icons:** macOS does not allow an app to move another app's
+> menu bar icons. To choose what gets hidden, hold **⌘** and drag an icon to
+> the left of the MacTrayOrganiser separator, then collapse the section.
 
 ---
 
@@ -57,19 +61,28 @@ MacTrayOrganiser lives in your **menu bar** (top of screen), not the Dock. Look 
 ### Basic Usage
 1. **Click** the grid icon to open the panel
 2. **Click** any icon to activate it
-3. **Right-click** an icon to pin or hide it
-4. **Drag** icons to reorder them
+3. **Right-click** an icon to pin it to the top of the list
+4. **Click the eye button** to collapse or reveal the hidden section
 
-### Reordering in macOS Menu Bar
-To move icons in the actual macOS menu bar:
-- Hold **⌘ Command** and **drag** the icon to a new position
+### Hiding and rearranging icons
+The hidden section is the part of the menu bar to the left of the
+MacTrayOrganiser separator. Everything there is tucked off-screen when the
+section is collapsed.
+
+- **Hide an icon:** hold **⌘** and drag it to the left of the separator
+- **Show an icon:** hold **⌘** and drag it back to the right of the separator
+- **Collapse or reveal:** click the eye button in the panel, or ⌥-click (or
+  right-click) the MacTrayOrganiser icon
+
+macOS handles the ⌘-drag itself and does not let an app do it for you, which
+is why this step is manual.
 
 ### Tabs
 | Tab | Description |
 |-----|-------------|
 | **All** | All visible menu bar items |
 | **Pinned** | Your pinned favorites |
-| **Hidden** | Items you've hidden |
+| **Hidden** | Items in the hidden section (left of the separator) |
 
 ---
 
@@ -115,13 +128,12 @@ MacTrayOrganiser/
 ├── Services/                   # Business logic
 │   ├── AccessibilityService.swift
 │   ├── MenuBarScanner.swift
+│   ├── StatusBarController.swift
 │   └── PermissionManager.swift
-├── Views/                      # SwiftUI views
-│   ├── MenuBarView.swift
-│   ├── IconGridView.swift
-│   └── ...
-└── Utilities/                  # Helpers
-    └── ImageCapture.swift
+└── Views/                      # SwiftUI views
+    ├── MenuBarView.swift
+    ├── IconGridView.swift
+    └── SettingsView.swift
 ```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed technical documentation.

@@ -10,17 +10,23 @@ import AppKit
 import ApplicationServices
 
 struct MenuBarItem: Identifiable, Hashable {
-    let id: UUID
+    /// Stable identity derived from the owning app and title, so SwiftUI keeps
+    /// the same view identity across rescans. The scanner appends a suffix when
+    /// two items would otherwise share an identifier.
+    var id: String
     let title: String
     let ownerName: String
     let ownerPID: pid_t
     let position: CGPoint
     let size: CGSize
     let axElement: AXUIElement
+    /// True for items hosted by Control Center or SystemUIServer.
+    let isSystemItem: Bool
     var icon: NSImage?
+    /// True when the item sits in the hidden section of the menu bar
+    /// (left of MacTrayOrganiser's separator).
     var isHidden: Bool
     var isPinned: Bool
-    var sortOrder: Int
 
     init(
         title: String,
@@ -29,22 +35,28 @@ struct MenuBarItem: Identifiable, Hashable {
         position: CGPoint,
         size: CGSize,
         axElement: AXUIElement,
+        isSystemItem: Bool = false,
         icon: NSImage? = nil,
         isHidden: Bool = false,
-        isPinned: Bool = false,
-        sortOrder: Int = 0
+        isPinned: Bool = false
     ) {
-        self.id = UUID()
+        self.id = MenuBarItem.preferenceKey(ownerName: ownerName, title: title)
         self.title = title
         self.ownerName = ownerName
         self.ownerPID = ownerPID
         self.position = position
         self.size = size
         self.axElement = axElement
+        self.isSystemItem = isSystemItem
         self.icon = icon
         self.isHidden = isHidden
         self.isPinned = isPinned
-        self.sortOrder = sortOrder
+    }
+
+    /// Frame in the global top-left coordinate space used by the
+    /// Accessibility API and Core Graphics events.
+    var frame: CGRect {
+        CGRect(origin: position, size: size)
     }
 
     // For display purposes
@@ -65,14 +77,21 @@ struct MenuBarItem: Identifiable, Hashable {
     }
 
     // Perform a click on this menu bar item
-    func performClick() {
-        AXUIElementPerformAction(axElement, kAXPressAction as CFString)
+    @discardableResult
+    func performClick() -> Bool {
+        AXUIElementPerformAction(axElement, kAXPressAction as CFString) == .success
     }
 }
 
 // Extension for storing hidden/pinned preferences
 extension MenuBarItem {
-    var preferenceKey: String {
+    /// Key used to persist per-item preferences. Stable across relaunches
+    /// because it does not include the process identifier.
+    static func preferenceKey(ownerName: String, title: String) -> String {
         "\(ownerName)_\(title)"
+    }
+
+    var preferenceKey: String {
+        MenuBarItem.preferenceKey(ownerName: ownerName, title: title)
     }
 }

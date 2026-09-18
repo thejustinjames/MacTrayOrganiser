@@ -90,17 +90,13 @@ MacTrayOrganiser/
 ├── Services/
 │   ├── AccessibilityService.swift # Low-level AXUIElement wrapper
 │   ├── MenuBarScanner.swift       # Discovers and tracks menu bar items
+│   ├── StatusBarController.swift  # Owns the status items, popover and collapse
 │   └── PermissionManager.swift    # Handles permission requests
 │
 ├── Views/
-│   ├── MenuBarView.swift          # Main MenuBarExtra content
-│   ├── IconGridView.swift         # Grid display with drag-and-drop
-│   ├── MainPanelView.swift        # Floating panel variant
-│   ├── OnboardingView.swift       # First-run permission flow
+│   ├── MenuBarView.swift          # Popover content
+│   ├── IconGridView.swift         # Grid display of icons
 │   └── SettingsView.swift         # App settings
-│
-├── Utilities/
-│   └── ImageCapture.swift         # Screen capture for icon images
 │
 ├── Assets.xcassets/               # App icons and assets
 ├── AppIcon.icns                   # App icon file
@@ -160,29 +156,54 @@ class AccessibilityService {
 - `kAXChildrenAttribute` - Child elements
 - `kAXExtrasMenuBarAttribute` - Menu bar extras
 
-### 3. MenuBarScanner
+### 3. StatusBarController
+
+Owns the two status items and the popover, and controls placement.
+
+```swift
+@MainActor final class StatusBarController {
+    func togglePopover()                 // Show/hide the panel
+    func setCollapsed(_ collapsed: Bool) // Tuck away / reveal the hidden section
+    var hiddenBoundaryX: CGFloat?        // Items left of this are hidden
+    func openSettings()                  // Open the Settings scene
+}
+```
+
+Layout, left to right: hidden items, separator, main icon, visible items.
+Collapsing widens the separator so everything to its left is pushed off the
+edge of the menu bar; macOS keeps those items alive, so they are still
+listed. A high seeded "NSStatusItem Preferred Position" puts the app's own
+items at the left end. macOS does not let an app move another app's menu bar
+items, so the user places icons on either side of the separator with a ⌘-drag.
+
+### 4. MenuBarScanner
 
 Orchestrates scanning and maintains the list of menu bar items.
 
 ```swift
-class MenuBarScanner: ObservableObject {
-    @Published var menuBarItems: [MenuBarItem] = []
-    @Published var isScanning: Bool = false
+@MainActor final class MenuBarScanner: ObservableObject {
+    @Published private(set) var menuBarItems: [MenuBarItem] = []
+    @Published private(set) var isScanning: Bool = false
 
-    func scan()                    // Full scan
-    func startAutoRefresh()        // Periodic scanning
-    func clickItem(_ item: MenuBarItem)  // Simulate click
+    func scan()                          // Full scan
+    func startAutoRefresh()              // Periodic scanning
+    func clickItem(_ item: MenuBarItem)  // Reveal if hidden, then press
 }
 ```
 
 **Scanning Process:**
 1. Query SystemUIServer for menu bar extras
 2. Query ControlCenter for system items
-3. Query each running app for their extras
+3. Query each running app for their extras (skipping MacTrayOrganiser itself)
 4. Merge, deduplicate, and sort by position
-5. Apply user preferences (hidden, pinned, order)
+5. Apply user preferences (hidden, pinned, order, system-icon filter)
 
-### 4. PermissionManager
+Steps 1 to 4 run on a background queue and only touch the Accessibility API.
+Step 5 runs on the main thread and is repeated whenever `AppSettings` changes,
+so pinning, hiding, reordering or toggling a setting updates the list without
+a full rescan. Overlapping scan requests are dropped while one is in progress.
+
+### 5. PermissionManager
 
 Handles Accessibility permission lifecycle.
 
@@ -203,27 +224,27 @@ class PermissionManager: ObservableObject {
 4. Poll periodically until granted
 5. Post notification when permission changes
 
-### 5. MenuBarItem (Model)
+### 6. MenuBarItem (Model)
 
 ```swift
 struct MenuBarItem: Identifiable, Hashable {
-    let id: UUID
+    var id: String          // Stable across rescans: "<owner>_<title>", suffixed if duplicated
     let title: String
     let ownerName: String
     let ownerPID: pid_t
     let position: CGPoint
     let size: CGSize
     let axElement: AXUIElement
+    let isSystemItem: Bool  // Hosted by Control Center or SystemUIServer
     var icon: NSImage?
-    var isHidden: Bool
+    var isHidden: Bool      // Currently in the hidden section
     var isPinned: Bool
-    var sortOrder: Int
 
-    func performClick()
+    @discardableResult func performClick() -> Bool
 }
 ```
 
-### 6. AppSettings
+### 7. AppSettings
 
 Persisted user preferences using `@Published` properties and UserDefaults.
 

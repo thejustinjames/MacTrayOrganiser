@@ -2,7 +2,7 @@
 //  MenuBarView.swift
 //  MacTrayOrganiser
 //
-//  The view shown when clicking the menu bar icon (using MenuBarExtra window style)
+//  The view shown in the popover when clicking the menu bar icon
 //
 
 import SwiftUI
@@ -10,7 +10,7 @@ import SwiftUI
 struct MenuBarView: View {
     @EnvironmentObject var appSettings: AppSettings
     @EnvironmentObject var permissionManager: PermissionManager
-    @StateObject private var scanner = MenuBarScanner.shared
+    @ObservedObject private var scanner = MenuBarScanner.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -20,7 +20,7 @@ struct MenuBarView: View {
                 MainContentView(scanner: scanner)
             }
         }
-        .frame(width: 380, height: 320)
+        .frame(width: 380, height: 360)
     }
 }
 
@@ -64,11 +64,28 @@ struct PermissionRequiredView: View {
 struct MainContentView: View {
     @ObservedObject var scanner: MenuBarScanner
     @EnvironmentObject var appSettings: AppSettings
+    @State private var selectedTab: ItemTab = .all
+
+    enum ItemTab: String, CaseIterable {
+        case all = "All"
+        case pinned = "Pinned"
+        case hidden = "Hidden"
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             // Header
             HeaderView(scanner: scanner)
+
+            Picker("View", selection: $selectedTab) {
+                ForEach(ItemTab.allCases, id: \.self) { tab in
+                    Text(tab.rawValue).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
 
             Divider()
 
@@ -78,7 +95,7 @@ struct MainContentView: View {
             } else if scanner.menuBarItems.isEmpty {
                 EmptyStateView(scanner: scanner)
             } else {
-                IconGridView(items: scanner.visibleItems)
+                tabContent
             }
 
             Divider()
@@ -87,10 +104,53 @@ struct MainContentView: View {
             FooterView()
         }
     }
+
+    @ViewBuilder
+    private var tabContent: some View {
+        switch selectedTab {
+        case .all:
+            if scanner.visibleItems.isEmpty {
+                TabPlaceholderView(title: "All items are hidden", hint: "Tap the eye button to reveal them")
+            } else {
+                IconGridView(items: scanner.visibleItems)
+            }
+        case .pinned:
+            if scanner.pinnedItems.isEmpty {
+                TabPlaceholderView(title: "No pinned items", hint: "Right-click an icon to pin it")
+            } else {
+                IconGridView(items: scanner.pinnedItems)
+            }
+        case .hidden:
+            if scanner.hiddenItems.isEmpty {
+                TabPlaceholderView(title: "No hidden items", hint: "⌘-drag a menu bar icon left of the MacTrayOrganiser separator to hide it")
+            } else {
+                IconGridView(items: scanner.hiddenItems)
+            }
+        }
+    }
+}
+
+struct TabPlaceholderView: View {
+    let title: String
+    let hint: String
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Spacer()
+            Text(title)
+                .foregroundColor(.secondary)
+            Text(hint)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
 }
 
 struct HeaderView: View {
     @ObservedObject var scanner: MenuBarScanner
+    @EnvironmentObject var appSettings: AppSettings
 
     var body: some View {
         HStack {
@@ -104,10 +164,17 @@ struct HeaderView: View {
                     .scaleEffect(0.6)
             }
 
+            Button(action: { StatusBarController.shared.toggleCollapsed() }) {
+                Image(systemName: appSettings.isCollapsed ? "eye" : "eye.slash")
+            }
+            .buttonStyle(.borderless)
+            .help(appSettings.isCollapsed ? "Reveal hidden items in the menu bar" : "Tuck hidden items away")
+
             Button(action: { scanner.scan() }) {
                 Image(systemName: "arrow.clockwise")
             }
             .buttonStyle(.borderless)
+            .disabled(scanner.isScanning)
             .help("Refresh menu bar items")
         }
         .padding(.horizontal, 12)
@@ -163,11 +230,7 @@ struct EmptyStateView: View {
 struct FooterView: View {
     var body: some View {
         HStack {
-            Button(action: {
-                if let url = URL(string: "x-apple.systempreferences:") {
-                    NSWorkspace.shared.open(url)
-                }
-            }) {
+            SettingsButton {
                 Image(systemName: "gear")
             }
             .buttonStyle(.borderless)

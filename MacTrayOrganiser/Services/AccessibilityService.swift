@@ -152,9 +152,14 @@ class AccessibilityService {
 
     // MARK: - Application Elements
 
-    /// Get the accessibility element for an application by PID
+    /// Get the accessibility element for an application by PID.
+    ///
+    /// A short messaging timeout is set so an unresponsive app cannot stall
+    /// the whole scan for the system default of several seconds per call.
     func getApplicationElement(pid: pid_t) -> AXUIElement {
-        return AXUIElementCreateApplication(pid)
+        let element = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(element, 0.5)
+        return element
     }
 
     /// Get the menu bar element for an application
