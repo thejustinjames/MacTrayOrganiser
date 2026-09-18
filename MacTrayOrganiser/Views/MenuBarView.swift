@@ -159,11 +159,6 @@ struct HeaderView: View {
 
             Spacer()
 
-            if scanner.isScanning {
-                ProgressView()
-                    .scaleEffect(0.6)
-            }
-
             Button(action: { StatusBarController.shared.toggleCollapsed() }) {
                 Image(systemName: appSettings.isCollapsed ? "eye" : "eye.slash")
             }
@@ -174,7 +169,6 @@ struct HeaderView: View {
                 Image(systemName: "arrow.clockwise")
             }
             .buttonStyle(.borderless)
-            .disabled(scanner.isScanning)
             .help("Refresh menu bar items")
         }
         .padding(.horizontal, 12)

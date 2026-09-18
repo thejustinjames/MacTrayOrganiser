@@ -11,20 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The app now places its own menu bar icon at the far left of the status items
 - Collapsible hidden section: a separator that tucks icons on its left off-screen, toggled from the panel's eye button or by ⌥-click / right-click on the app icon (the Hidden Bar model)
 - Right-click or ⌥-click the app icon to toggle the hidden section without opening the panel
+- Launch at Login is enabled automatically on the first run so the icon is in the menu bar early at each login; turning it off in Settings sticks
 
 ### Changed
 - Hiding an icon now moves it in the real menu bar via the collapsible section, rather than only hiding it inside the app. Because macOS does not let an app move another app's menu bar icons, the user places icons on either side of the separator with a ⌘-drag; the app collapses and reveals them
 - The "Hidden" tab now reflects what is actually in the hidden section of the menu bar
 - Clicking a hidden item reveals the section first, then activates it
 - Removed in-app-only drag reordering, which could not affect the real menu bar
+- The panel now scans only while it is open and skips redraws when nothing changed, so it no longer flickers during periodic refreshes
 
 ### Fixed
 - Hidden items could not be recovered: the menu bar popover now has the All, Pinned and Hidden tabs
 - "Show System Icons" and "Grid Columns" settings had no effect
 - Changing the refresh interval did nothing until the app was relaunched
 - Drag-and-drop reordering swapped two items instead of moving the dragged one
-- The Settings button in the popover opened System Settings instead of the app's own Settings
-- Settings could be opened behind other windows; the app now activates first
+- The Settings cog in the panel did nothing; it now opens the app's Settings window (via SwiftUI's openSettings on macOS 14+) and brings the app to the front first
 - The first scan after Accessibility permission was granted was skipped
 - "Grant Permission" appeared to do nothing on repeat presses; it now opens the Accessibility pane directly
 - "Launch at Login" showed a stale value if the login item was changed in System Settings

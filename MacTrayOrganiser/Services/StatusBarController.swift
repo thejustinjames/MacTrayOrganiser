@@ -183,10 +183,10 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
             )
         }
 
-        MenuBarScanner.shared.scan()
         NSApp.activate(ignoringOtherApps: true)
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
+        MenuBarScanner.shared.beginLiveRefresh()
     }
 
     func closePopover() {
@@ -196,7 +196,9 @@ final class StatusBarController: NSObject, NSPopoverDelegate {
     }
 
     nonisolated func popoverDidClose(_ notification: Notification) {
-        // The popover rescans on open, so nothing is needed here.
+        Task { @MainActor in
+            MenuBarScanner.shared.endLiveRefresh()
+        }
     }
 
     // MARK: - Settings window

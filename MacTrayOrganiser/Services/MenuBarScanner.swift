@@ -40,14 +40,19 @@ final class MenuBarScanner: ObservableObject {
 
     private init() {
         NotificationCenter.default.publisher(for: .accessibilityPermissionGranted)
-            .sink { _ in Task { @MainActor in MenuBarScanner.shared.startAutoRefresh() } }
+            .sink { _ in
+                Task { @MainActor in
+                    let scanner = MenuBarScanner.shared
+                    if StatusBarController.shared.isPopoverShown { scanner.beginLiveRefresh() }
+                }
+            }
             .store(in: &cancellables)
 
         NotificationCenter.default.publisher(for: .accessibilityPermissionRevoked)
             .sink { _ in
                 Task { @MainActor in
                     let scanner = MenuBarScanner.shared
-                    scanner.stopAutoRefresh()
+                    scanner.endLiveRefresh()
                     scanner.discoveredItems = []
                     scanner.menuBarItems = []
                 }
@@ -67,18 +72,20 @@ final class MenuBarScanner: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { _ in
                 Task { @MainActor in
-                    guard PermissionManager.shared.hasAccessibilityPermission else { return }
-                    MenuBarScanner.shared.scheduleTimer()
+                    let scanner = MenuBarScanner.shared
+                    guard PermissionManager.shared.hasAccessibilityPermission,
+                          StatusBarController.shared.isPopoverShown else { return }
+                    scanner.scheduleTimer()
                 }
             }
             .store(in: &cancellables)
     }
 
-    /// Begin periodic scanning if permission is already granted. Called once
-    /// at launch; later permission grants start scanning via notification.
+    /// Do one scan at launch if permitted, so the first popover is not empty.
+    /// Periodic refreshing only runs while the popover is open.
     func start() {
         if PermissionManager.shared.hasAccessibilityPermission {
-            startAutoRefresh()
+            scan()
         }
     }
 
@@ -226,26 +233,44 @@ final class MenuBarScanner: ObservableObject {
             items[index].isPinned = settings.isPinned(item.preferenceKey)
         }
 
-        menuBarItems = items.sorted { lhs, rhs in
+        let ordered = items.sorted { lhs, rhs in
             if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
             return lhs.position.x < rhs.position.x
         }
+
+        // Skip the assignment when nothing the popover renders has changed, so
+        // a routine rescan does not churn the grid.
+        if ordered.count == menuBarItems.count,
+           zip(ordered, menuBarItems).allSatisfy({
+               $0.id == $1.id && $0.isHidden == $1.isHidden && $0.isPinned == $1.isPinned
+           }) {
+            return
+        }
+        menuBarItems = ordered
     }
 
-    // MARK: - Auto Refresh
+    // MARK: - Live Refresh (only while the popover is open)
 
-    func startAutoRefresh() {
-        scheduleTimer()
+    /// Scan now and, unless refreshing is set to manual, keep scanning at the
+    /// configured interval for as long as the popover stays open.
+    func beginLiveRefresh() {
         scan()
+        scheduleTimer()
     }
 
-    func stopAutoRefresh() {
+    /// Stop periodic scanning when the popover closes; there is nothing on
+    /// screen to keep up to date.
+    func endLiveRefresh() {
+        stopTimer()
+    }
+
+    private func stopTimer() {
         refreshTimer?.invalidate()
         refreshTimer = nil
     }
 
     private func scheduleTimer() {
-        stopAutoRefresh()
+        stopTimer()
         let interval = settings.refreshInterval
         guard !settings.isManualRefresh else { return }
         let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in

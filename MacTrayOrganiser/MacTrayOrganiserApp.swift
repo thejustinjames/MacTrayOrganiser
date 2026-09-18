@@ -33,5 +33,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Create the status items, then begin scanning
         _ = StatusBarController.shared
         MenuBarScanner.shared.start()
+
+        enableLoginItemOnFirstRun()
+    }
+
+    /// A menu bar utility is most useful when it is already in the bar at
+    /// login, and launching early helps it keep its left-hand spot. Register
+    /// as a login item once, on first launch; the user can turn it off in
+    /// Settings and that choice then sticks.
+    private func enableLoginItemOnFirstRun() {
+        let key = "didConfigureInitialLogin"
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: key) else { return }
+        defaults.set(true, forKey: key)
+        AppSettings.shared.launchAtLogin = true
     }
 }

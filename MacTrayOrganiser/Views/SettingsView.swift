@@ -191,13 +191,38 @@ struct AboutView: View {
 }
 
 /// Opens the app's Settings window from the popover.
+///
+/// `NSApp.sendAction(showSettingsWindow:)` does not fire reliably from an
+/// accessory app's popover, so on macOS 14+ this uses SwiftUI's `openSettings`
+/// action, which is the supported path. The app is activated first because an
+/// accessory app otherwise opens the window behind others.
 struct SettingsButton<Label: View>: View {
     @ViewBuilder let label: () -> Label
 
     var body: some View {
-        Button(action: {
-            StatusBarController.shared.openSettings()
-        }) {
+        if #available(macOS 14.0, *) {
+            OpenSettingsButton(label: label)
+        } else {
+            Button {
+                StatusBarController.shared.openSettings()
+            } label: {
+                label()
+            }
+        }
+    }
+}
+
+@available(macOS 14.0, *)
+private struct OpenSettingsButton<Label: View>: View {
+    @Environment(\.openSettings) private var openSettingsAction
+    @ViewBuilder let label: () -> Label
+
+    var body: some View {
+        Button {
+            StatusBarController.shared.closePopover()
+            NSApp.activate(ignoringOtherApps: true)
+            openSettingsAction()
+        } label: {
             label()
         }
     }
